@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Manager Q&A Log</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Calm Workflow -->
+    <!-- Application Structure Plan: The application is designed as an interactive dashboard to transform the static Google Doc into a dynamic workflow tool. The structure includes: 1) A top-level summary with key performance indicators (KPIs) and two charts for an immediate overview of the workload and status distribution. This addresses the need for a quick pulse-check. 2) A centralized, interactive table/log below the dashboard. Instead of three separate static tables, a single, filterable list provides a unified view, which is more efficient for searching and status tracking. Users can filter by status ('Awaiting Response', 'In Progress', 'Resolved') and perform a live search. 3) An "Add New Question" modal, which provides a structured input method, improving data consistency over manually adding rows. This task-oriented, dashboard-first structure was chosen because it directly addresses the core problem of a "bottleneck" by making it easy to see where work is piling up and to manage the flow of tasks from submission to resolution in a single, intuitive interface. -->
+    <!-- Visualization & Content Choices: 1) KPIs (Open, In Progress, Resolved): Goal=Inform; Method=Styled HTML stat cards; Interaction=None (dynamic update); Justification=Provides immediate, at-a-glance metrics on workflow status. 2) Bar Chart (Open Questions by Manager): Goal=Compare; Method=Chart.js Bar Chart; Interaction=Hover tooltips; Justification=Quickly identifies which managers have the most pending items, highlighting potential bottlenecks or areas needing attention. 3) Donut Chart (Overall Status): Goal=Inform (proportions); Method=Chart.js Donut Chart; Interaction=Hover tooltips; Justification=Gives a high-level view of the entire workflow's health. 4) Interactive Table (Master Log): Goal=Organize/Explore; Method=HTML table with JS filtering/searching; Interaction=Filter buttons, search input, clickable rows to expand context; Justification=This is the core of the app, allowing users to drill down into specific items efficiently, replacing the manual process of scanning a static document. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-sans-serif;
+            background-color: #f8f9fa; /* Light grey background */
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 300px;
+            max-height: 350px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 350px;
+            }
+        }
+        .table-cell-truncate {
+            max-width: 250px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .modal {
+            transition: opacity 0.25s ease;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="app" class="p-4 md:p-8 max-w-7xl mx-auto">
+
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 pb-4 border-b border-gray-200">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">Manager Questions & Action Log</h1>
+                <p class="text-gray-500 mt-1">A real-time dashboard to track questions, delegate actions, and resolve bottlenecks.</p>
+            </div>
+            <div class="flex flex-col md:flex-row items-center gap-4">
+                <p id="user-id-display" class="text-sm text-gray-600">Loading User ID...</p>
+                <button id="add-question-btn" class="mt-4 md:mt-0 bg-blue-600 text-white font-semibold py-2 px-5 rounded-lg shadow-sm hover:bg-blue-700 transition-colors duration-200 flex items-center">
+                    <span class="text-2xl mr-2 leading-none">+</span> Add New Question
+                </button>
+            </div>
+        </header>
+
+        <!-- Loading Indicator -->
+        <div id="loading-spinner" class="flex justify-center items-center py-12">
+            <div class="spinner"></div>
+            <p class="ml-4 text-gray-600">Loading data...</p>
+        </div>
+
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="mb-8 hidden">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">Workflow Overview</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100 flex flex-col justify-between">
+                    <h3 class="font-semibold text-gray-500">Awaiting Response</h3>
+                    <p id="stat-awaiting" class="text-4xl font-bold text-orange-500">0</p>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100 flex flex-col justify-between">
+                    <h3 class="font-semibold text-gray-500">In Progress</h3>
+                    <p id="stat-progress" class="text-4xl font-bold text-blue-500">0</p>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100 flex flex-col justify-between">
+                    <h3 class="font-semibold text-gray-500">Resolved</h3>
+                    <p id="stat-resolved" class="text-4xl font-bold text-green-500">0</p>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100">
+                    <h3 class="text-lg font-semibold mb-2 text-center">Open Questions by Manager</h3>
+                    <p class="text-sm text-gray-500 text-center mb-4">This chart shows who currently has questions awaiting a response, helping to identify where attention may be needed.</p>
+                    <div class="chart-container">
+                        <canvas id="managerChart"></canvas>
+                    </div>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100">
+                    <h3 class="text-lg font-semibold mb-2 text-center">Overall Status Distribution</h3>
+                     <p class="text-sm text-gray-500 text-center mb-4">This chart provides a high-level snapshot of the entire workflow, from submission to resolution.</p>
+                    <div class="chart-container">
+                        <canvas id="statusChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Interactive Log Section -->
+        <section id="interactive-log" class="hidden">
+            <h2 class="text-2xl font-semibold mb-4 text-gray-700">Interactive Log</h2>
+            <p class="text-gray-600 mb-6">Use the filters and search bar below to explore all items in the log. Click any row to expand and view the full context or details for that item. This centralized view allows for quick tracking and management of every request.</p>
+            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100">
+                <div class="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                    <div class="flex items-center space-x-2 flex-wrap">
+                        <button data-filter="All" class="filter-btn bg-blue-600 text-white py-2 px-4 rounded-lg font-semibold">All</button>
+                        <button data-filter="Awaiting Response" class="filter-btn bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-semibold">Awaiting Response</button>
+                        <button data-filter="In Progress" class="filter-btn bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-semibold">In Progress</button>
+                        <button data-filter="Resolved" class="filter-btn bg-gray-200 text-gray-700 py-2 px-4 rounded-lg font-semibold">Resolved</button>
+                    </div>
+                    <input type="text" id="search-input" placeholder="Search by manager, keyword..." class="w-full md:w-64 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th class="p-4 font-semibold">Manager</th>
+                                <th class="p-4 font-semibold">Question</th>
+                                <th class="p-4 font-semibold">Date Submitted</th>
+                                <th class="p-4 font-semibold">Status</th>
+                                <th class="p-4 font-semibold text-center">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="log-table-body">
+                           <!-- Rows will be injected by JavaScript -->
+                        </tbody>
+                    </table>
+                     <div id="no-results" class="text-center py-12 text-gray-500 hidden">
+                        <p class="text-xl">No items match your search or filter.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Modal for Adding New Question -->
+    <div id="modal" class="modal fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 opacity-0 pointer-events-none">
+        <div id="modal-content" class="bg-white w-full max-w-2xl rounded-xl shadow-2xl p-8 transform scale-95 transition-transform duration-300">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">Submit a New Question</h2>
+                <button id="close-modal-btn" class="text-gray-500 hover:text-gray-800 text-3xl">&times;</button>
+            </div>
+            <form id="new-question-form">
+                <div class="mb-4">
+                    <label for="manager-name" class="block font-semibold mb-2">Your Name</label>
+                    <input type="text" id="manager-name" name="manager" class="w-full p-2 border border-gray-300 rounded-lg" required>
+                </div>
+                <div class="mb-4">
+                    <label for="question" class="block font-semibold mb-2">Question</label>
+                    <input type="text" id="question" name="question" class="w-full p-2 border border-gray-300 rounded-lg" required>
+                </div>
+                <div class="mb-6">
+                    <label for="context" class="block font-semibold mb-2">Context / Details</label>
+                    <textarea id="context" name="context" rows="4" class="w-full p-2 border border-gray-300 rounded-lg" required></textarea>
+                </div>
+                <div class="flex justify-end">
+                    <button type="submit" class="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">Submit Question</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase configuration and initialization
+        const firebaseConfig = {
+            apiKey: "AIzaSyBDgXr2x_EDhsKXpxMRiPhxk6tKRyMASqg",
+            authDomain: "mangement-log.firebaseapp.com",
+            projectId: "mangement-log",
+            storageBucket: "mangement-log.firebasestorage.app",
+            messagingSenderId: "504428259828",
+            appId: "1:504428259828:web:7a599dc891e5fb74a8b1a1",
+            measurementId: "G-9T867K7HCR"
+        };
+
+        // Define appId using the projectId from your firebaseConfig
+        const appId = firebaseConfig.projectId;
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let userId = null;
+        let isAuthReady = false;
+
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // Auth state listener
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                } else {
+                    // Fallback to anonymous sign-in if no user or custom token
+                    try {
+                        const anonUser = await signInAnonymously(auth);
+                        userId = anonUser.user.uid;
+                    } catch (e) {
+                        console.error("Error signing in anonymously:", e);
+                        // Generate a random ID if anonymous sign-in fails
+                        userId = crypto.randomUUID();
+                    }
+                }
+                document.getElementById('user-id-display').textContent = `Your User ID: ${userId}`;
+                isAuthReady = true;
+                // Only call fetchDataAndSetupListeners if userId is determined
+                if (userId) {
+                    fetchDataAndSetupListeners(); // Start fetching data only when auth is ready
+                }
+                document.getElementById('dashboard').classList.remove('hidden');
+                document.getElementById('interactive-log').classList.remove('hidden');
+                document.getElementById('loading-spinner').classList.add('hidden');
+            });
+
+            // Attempt to sign in anonymously
+            // NOTE: For this to work, you MUST enable "Anonymous" sign-in provider in your Firebase project's Authentication section.
+            signInAnonymously(auth).catch(e => {
+                console.error("Error with initial anonymous sign-in:", e);
+            });
+
+            let appData = [];
+            let managerChart, statusChart;
+            let currentFilter = 'All';
+            let currentSearchTerm = '';
+
+            const tableBody = document.getElementById('log-table-body');
+            const noResultsDiv = document.getElementById('no-results');
+
+            const statusColors = {
+                'Awaiting Response': { bg: 'bg-orange-100', text: 'text-orange-800', chart: 'rgba(251, 146, 60, 1)' },
+                'In Progress': { bg: 'bg-blue-100', text: 'text-blue-800', chart: 'rgba(59, 130, 246, 1)' },
+                'Resolved': { bg: 'bg-green-100', text: 'text-green-800', chart: 'rgba(16, 185, 129, 1)' }
+            };
+            
+            // Function to fetch data from Firestore and set up real-time listener
+            function fetchDataAndSetupListeners() {
+                if (!isAuthReady) return; // Ensure authentication is complete
+
+                const q = query(collection(db, `/artifacts/${appId}/public/data/managerQuestions`));
+
+                onSnapshot(q, (snapshot) => {
+                    const fetchedData = [];
+                    snapshot.forEach((doc) => {
+                        fetchedData.push({ id: doc.id, ...doc.data() });
+                    });
+                    // Sort data by dateSubmitted descending (latest first)
+                    appData = fetchedData.sort((a, b) => new Date(b.dateSubmitted) - new Date(a.dateSubmitted));
+                    updateAll(); // Update UI with new data
+                }, (error) => {
+                    console.error("Error fetching data from Firestore:", error);
+                    // Optionally display a user-friendly error message
+                });
+            }
+
+            function updateAll() {
+                updateStats();
+                updateManagerChart();
+                updateStatusChart();
+                renderTable();
+            }
+
+            function updateStats() {
+                document.getElementById('stat-awaiting').textContent = appData.filter(d => d.status === 'Awaiting Response').length;
+                document.getElementById('stat-progress').textContent = appData.filter(d => d.status === 'In Progress').length;
+                document.getElementById('stat-resolved').textContent = appData.filter(d => d.status === 'Resolved').length;
+            }
+
+            function updateManagerChart() {
+                const ctx = document.getElementById('managerChart').getContext('2d');
+                const openQuestions = appData.filter(d => d.status === 'Awaiting Response');
+                const managers = [...new Set(openQuestions.map(d => d.manager))];
+                const data = managers.map(manager => {
+                    return openQuestions.filter(d => d.manager === manager).length;
+                });
+
+                if (managerChart) {
+                    managerChart.destroy();
+                }
+
+                managerChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: managers,
+                        datasets: [{
+                            label: 'Open Questions',
+                            data: data,
+                            backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 1,
+                            borderRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    title: () => null, 
+                                    label: (context) => `${context.label}: ${context.raw} open questions`
+                                }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: { stepSize: 1 }
+                            }
+                        }
+                    }
+                });
+            }
+
+            function updateStatusChart() {
+                const ctx = document.getElementById('statusChart').getContext('2d');
+                const statusCounts = {
+                    'Awaiting Response': appData.filter(d => d.status === 'Awaiting Response').length,
+                    'In Progress': appData.filter(d => d.status === 'In Progress').length,
+                    'Resolved': appData.filter(d => d.status === 'Resolved').length
+                };
+
+                if (statusChart) {
+                    statusChart.destroy();
+                }
+                statusChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: Object.keys(statusCounts),
+                        datasets: [{
+                            data: Object.values(statusCounts),
+                            backgroundColor: [
+                                statusColors['Awaiting Response'].chart,
+                                statusColors['In Progress'].chart,
+                                statusColors['Resolved'].chart,
+                            ],
+                            hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'bottom' } }
+                    }
+                });
+            }
+            
+            function renderTable() {
+                let filteredData = appData;
+
+                if (currentFilter !== 'All') {
+                    filteredData = filteredData.filter(d => d.status === currentFilter);
+                }
+
+                if (currentSearchTerm) {
+                    const lowerCaseSearch = currentSearchTerm.toLowerCase();
+                    filteredData = filteredData.filter(d => 
+                        d.manager.toLowerCase().includes(lowerCaseSearch) ||
+                        d.question.toLowerCase().includes(lowerCaseSearch) ||
+                        d.context.toLowerCase().includes(lowerCaseSearch) ||
+                        (d.yousefsAnswer && d.yousefsAnswer.toLowerCase().includes(lowerCaseSearch))
+                    );
+                }
+                
+                tableBody.innerHTML = '';
+                if (filteredData.length === 0) {
+                    noResultsDiv.classList.remove('hidden');
+                } else {
+                    noResultsDiv.classList.add('hidden');
+                }
+
+                filteredData.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.className = 'border-b border-gray-200 hover:bg-gray-50 cursor-pointer';
+                    row.dataset.itemId = item.id;
+                    
+                    const statusConfig = statusColors[item.status];
+
+                    row.innerHTML = `
+                        <td class="p-4">${item.manager}</td>
+                        <td class="p-4 table-cell-truncate" title="${item.question}">${item.question}</td>
+                        <td class="p-4">${item.dateSubmitted}</td>
+                        <td class="p-4">
+                            <span class="px-3 py-1 text-sm font-semibold rounded-full ${statusConfig.bg} ${statusConfig.text}">
+                                ${item.status}
+                            </span>
+                        </td>
+                        <td class="p-4 text-center">
+                            <select data-id="${item.id}" class="status-changer bg-gray-200 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-1.5">
+                                <option ${item.status === 'Awaiting Response' ? 'selected' : ''}>Awaiting Response</option>
+                                <option ${item.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                                <option ${item.status === 'Resolved' ? 'selected' : ''}>Resolved</option>
+                            </select>
+                        </td>
+                    `;
+                    
+                    const detailsRow = document.createElement('tr');
+                    detailsRow.className = 'hidden bg-gray-50';
+                    detailsRow.dataset.detailsFor = item.id;
+                    detailsRow.innerHTML = `
+                        <td colspan="5" class="p-6">
+                            <h4 class="font-bold text-md mb-2">Context / Details:</h4>
+                            <p class="text-gray-600 mb-4 whitespace-pre-wrap">${item.context}</p>
+                            ${item.actionResponse ? `
+                                <h4 class="font-bold text-md mb-2">Action / Response:</h4>
+                                <p class="text-gray-600 mb-4 whitespace-pre-wrap">${item.actionResponse}</p>
+                            ` : ''}
+                            
+                            <h4 class="font-bold text-md mb-2">Yousef's Answer:</h4>
+                            <textarea data-id="${item.id}" class="yousefs-answer-input w-full p-2 border border-gray-300 rounded-lg mb-2" rows="3" placeholder="Enter Yousef's answer here...">${item.yousefsAnswer || ''}</textarea>
+                            <button data-id="${item.id}" class="save-yousefs-answer-btn bg-blue-500 text-white font-semibold py-1.5 px-4 rounded-lg hover:bg-blue-600 transition-colors text-sm">Save Answer</button>
+                        </td>
+                    `;
+
+                    tableBody.appendChild(row);
+                    tableBody.appendChild(detailsRow);
+                });
+
+                document.querySelectorAll('.save-yousefs-answer-btn').forEach(button => {
+                    button.addEventListener('click', async (e) => {
+                        const itemId = e.target.dataset.id; // Use Firestore document ID
+                        const answerTextarea = document.querySelector(`.yousefs-answer-input[data-id="${itemId}"]`);
+                        const newAnswer = answerTextarea.value;
+                        try {
+                            const docRef = doc(db, `/artifacts/${appId}/public/data/managerQuestions`, itemId);
+                            await updateDoc(docRef, { yousefsAnswer: newAnswer });
+                            // onSnapshot will trigger updateAll() automatically
+                        } catch (error) {
+                            console.error("Error updating Yousef's Answer:", error);
+                            // Display a user-friendly error message
+                        }
+                    });
+                });
+            }
+            
+            tableBody.addEventListener('click', (e) => {
+                if (e.target.closest('select') || e.target.closest('.save-yousefs-answer-btn')) return;
+                
+                const row = e.target.closest('tr[data-item-id]');
+                if (!row) return;
+
+                const itemId = row.dataset.itemId;
+                const detailsRow = tableBody.querySelector(`tr[data-details-for="${itemId}"]`);
+                if(detailsRow) {
+                    detailsRow.classList.toggle('hidden');
+                }
+            });
+
+            tableBody.addEventListener('change', async (e) => {
+                if (e.target.classList.contains('status-changer')) {
+                    const itemId = e.target.dataset.id; // Use Firestore document ID
+                    const newStatus = e.target.value;
+                    const item = appData.find(d => d.id === itemId); // Find item locally for dateResolved logic
+
+                    let updatedFields = { status: newStatus };
+                    if (newStatus === 'Resolved' && !item.dateResolved) {
+                        updatedFields.dateResolved = new Date().toISOString().split('T')[0];
+                    } else if (newStatus !== 'Resolved') {
+                        updatedFields.dateResolved = null;
+                    }
+
+                    try {
+                        const docRef = doc(db, `/artifacts/${appId}/public/data/managerQuestions`, itemId);
+                        await updateDoc(docRef, updatedFields);
+                        // onSnapshot will trigger updateAll() automatically
+                    } catch (error) {
+                        console.error("Error updating status:", error);
+                        // Display a user-friendly error message
+                    }
+                }
+            });
+            
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelector('.filter-btn.bg-blue-600')?.classList.replace('bg-blue-600', 'bg-gray-200');
+                    document.querySelector('.filter-btn.text-white')?.classList.replace('text-white', 'text-gray-700');
+                    
+                    btn.classList.replace('bg-gray-200', 'bg-blue-600');
+                    btn.classList.replace('text-gray-700', 'text-white');
+                    
+                    currentFilter = btn.dataset.filter;
+                    renderTable();
+                });
+            });
+
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                currentSearchTerm = e.target.value;
+                renderTable();
+            });
+
+            const modal = document.getElementById('modal');
+            const modalContent = document.getElementById('modal-content');
+            const addQuestionBtn = document.getElementById('add-question-btn');
+            const closeModalBtn = document.getElementById('close-modal-btn');
+            const form = document.getElementById('new-question-form');
+
+            function openModal() {
+                modal.classList.remove('opacity-0', 'pointer-events-none');
+                modalContent.classList.remove('scale-95');
+            }
+
+            function closeModal() {
+                modalContent.classList.add('scale-95');
+                modal.classList.add('opacity-0', 'pointer-events-none');
+                form.reset();
+            }
+
+            addQuestionBtn.addEventListener('click', openModal);
+            closeModalBtn.addEventListener('click', closeModal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    closeModal();
+                }
+            });
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                try {
+                    const formData = new FormData(form);
+                    const newQuestion = {
+                        manager: formData.get('manager'),
+                        question: formData.get('question'),
+                        context: formData.get('context'),
+                        dateSubmitted: new Date().toISOString().split('T')[0],
+                        actionResponse: '',
+                        assignedTo: '',
+                        dueDate: '',
+                        status: 'Awaiting Response',
+                        dateResolved: null,
+                        yousefsAnswer: '',
+                        submittedBy: userId // Store the ID of the user who submitted this
+                    };
+                    // Add document to Firestore
+                    await addDoc(collection(db, `/artifacts/${appId}/public/data/managerQuestions`), newQuestion);
+                    closeModal();
+                } catch (error) {
+                    console.error("Error adding document:", error);
+                    // Display a user-friendly error message
+                }
+            });
+            // Initial call to update elements after DOM is loaded. Firebase listeners will then take over data updates.
+            // No need to call updateAll() directly here, as onAuthStateChanged will trigger fetchDataAndSetupListeners().
+        });
+    </script>
+</body>
+</html>
